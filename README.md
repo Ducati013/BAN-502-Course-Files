@@ -1,2 +1,2 @@
-# R-Library
-Basic functions  for r and r markdown from an entry level orientation
+# BAN 502 Course Files
+
