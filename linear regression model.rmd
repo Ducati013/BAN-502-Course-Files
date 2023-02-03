@@ -1,0 +1,136 @@
+
+
+Needed libraries  
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(GGally) #ggcorr and ggpairs
+library(ggcorrplot) #correlation plot alternative
+library(gridExtra) #create grids of plots
+```
+
+
+```{r, import File}
+credit = read_csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Mod 2/CreditData.csv")
+```
+We start by building a recipe.    
+```{r}
+credit_simple = recipe(AnnualCharges ~ AnnualIncome, credit)  #recipe(predict ~ predictor, DataFrame)
+# credit_simple  # just shows the 1:1 variables
+```
+
+we need to specify the type of model that we are building.  
+```{r}
+lm_model = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+```
+
+Next we combine the recipe and the model with a workflow.  
+```{r}
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(credit_simple)
+```
+
+Next we fit (execute) the workflow on our dataset.  
+```{r}
+lm_fited = fit(lm_wflow, credit)
+```
+
+```{r, create linear model}
+
+credit_simple_2 = recipe(AnnualCharges ~ HouseholdSize, credit) #recipe
+
+lm_wflow_2 = #change name 
+  workflow() %>% 
+  add_model(lm_model) %>% #can re-use the same lm_model 
+  add_recipe(credit_simple_2) #change to new recipe name
+
+lm_fit_2 = fit(lm_wflow_2, credit)
+```
+
+```{r, print the summary}
+summary(lm_fit_2$fit$fit$fit)
+```
+
+```{r, create visualization}
+P1 = ggplot(credit,aes(x=HouseholdSize,y=AnnualCharges)) + geom_point(alpha=0.1) + geom_smooth(method = "lm", color = "red") + theme_bw()
+P2 = ggplot(credit,aes(x=AnnualIncome,y=AnnualCharges)) + geom_point(alpha=0.1) + geom_smooth(method = "lm", color = "blue") + theme_bw()
+P1
+P2
+# grid.arrange(p1,p2,ncol=2)
+```
+
+```{r, LM Diagnostics}
+
+# **Assumption 1:** The predictor and response variable have a linear relationship  
+# is it linear?
+ggplot(credit,aes(x=AnnualIncome,y=AnnualCharges)) + geom_point(alpha=0.5) + theme_bw()  # sort of linear
+
+# **Assumption 2:** Model errors (residuals) are independent 
+dwtest(lm_fited$fit$fit$fit)  # P is huge fails to reject the null
+
+# **Assumption 3:**
+# Regression line of our plot
+credit = credit %>% mutate(resid1 = lm_fited$fit$fit$fit$residuals) #add the model residuals to our data frame
+ggplot(credit,aes(x=AnnualIncome,y=resid1)) + geom_point() + theme_bw()
+
+# **Assumption 4:** Model residuals are Normally-distributed  
+# Examine a histogram of the residuals.  
+ggplot(credit,aes(x=resid1)) + geom_histogram() + theme_bw()
+
+
+```
+
+```{r, Feature engineering}
+# feature engineering to see if we address the nonlinear relationship between our predictor and response. Tidymodels makes this easy by modifying the recipe.  
+
+credit_simple1 = recipe(AnnualCharges ~ AnnualIncome, credit) %>%
+  step_sqrt(all_predictors())  # this Step_sqrt will transform the model
+
+lm_model = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(credit_simple1)
+
+lm_fit = fit(lm_wflow, credit)
+
+summary(lm_fit$fit$fit$fit)
+
+
+# plot 
+ggplot(credit, aes(x=sqrt(AnnualIncome),y=AnnualCharges)) + geom_point() + 
+  geom_smooth(method="lm",se=FALSE, color="red") + theme_bw()
+```
+
+
+Further diagnostics.  
+```{r}
+dwtest(lm_fit$fit$fit$fit)
+
+credit = credit %>% mutate(resid2 = lm_fit$fit$fit$fit$residuals) #add the model residuals to our data frame
+
+
+# Plot
+ggplot(credit,aes(x=sqrt(AnnualIncome),y=resid2)) + geom_point() + geom_smooth(method="lm",se=FALSE, color="red")+ theme_bw()
+
+ggplot(credit,aes(x=resid2)) + geom_histogram() + theme_bw()
+```
+
+## How do we make predictions when we have a transformed variable in our model? Use the predict function as usual.   
+```{r}
+#Manually
+-3695.85  + 1874.82 *sqrt(100)  # estimate from summary(lm_fit$fit$fit$fit) intercept value + the X value* sqrt(n)
+-3695.85  + 1874.82 *sqrt(1000)
+
+#Using predict function
+testdata = data.frame(AnnualIncome = c(100,1000))
+predict(lm_fit, new_data = testdata)
+```
+

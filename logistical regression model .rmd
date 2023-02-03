@@ -1,0 +1,49 @@
+---
+title: "building logistic regression model"
+output: word_document
+date: "2023-01-31"
+---
+
+```{r Libraries and Load Titanic Data from the titanic package.}
+library(titanic)
+library(tidyverse)
+library(tidymodels)
+library(glmnet) #for Lasso, ridge, and elastic net models 
+
+titanic = titanic::titanic_train # load the titanic data
+```
+
+```{r convert to factor}
+titanic = titanic %>% mutate(Survived = as_factor(Survived)) %>% 
+  mutate(Survived = fct_recode(Survived, "No" = "0", "Yes" = "1" )) %>%   #renamed
+  mutate(Pclass = as_factor(Pclass)) %>% mutate(Sex = as_factor(Sex))
+# str(titanic)      # structure
+# summary(titanic)  # a summary 
+``` 
+ 
+```{r build the logistic regression model and summary}
+titanic_model = 
+  logistic_reg() %>% #note the use of logistic_reg
+  set_engine("glm") #standard logistic regression engine is glm
+
+titanic_recipe = recipe(Survived ~ Pclass, titanic) %>%   # recipe(response(y)~ predictors(x1+x2), df)
+  step_dummy(all_nominal(), -all_outcomes()) #exclude the response variable from being dummy converted  
+
+logreg_wf = workflow() %>%
+  add_recipe(titanic_recipe) %>% 
+  add_model(titanic_model)
+
+titanic_fit = fit(logreg_wf, titanic)
+
+summary(titanic_fit$fit$fit$fit)
+```
+
+```{r predictions}
+# first prediction
+newdata  = data.frame(Sex = "male"  , Pclass = "2", Age = 26)
+predict(titanic_fit3, newdata, type="prob")
+
+# second prediction
+newdata2 = data.frame(Sex = 'female', Pclass = '1', Age = 21)
+predict(titanic_fit3, newdata2, type="prob")
+```

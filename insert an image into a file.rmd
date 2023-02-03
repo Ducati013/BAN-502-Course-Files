@@ -1,0 +1,7 @@
+
+
+
+```{r, out.width = "100px"}   
+# this will include an image in a document 
+knitr::include_graphics("C:/users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Mod 3 Bias& Logistical regression/titanic.jpg")
+```

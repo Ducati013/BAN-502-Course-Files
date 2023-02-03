@@ -1,0 +1,59 @@
+# prediction model
+
+```{r libraries}
+
+library(tidyverse)
+library(tidymodels)
+```
+
+
+```{r readFile}
+DF = read_csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Mod 2/CreditData.csv")
+
+# colnames(File) 
+```
+
+```{r Build Recipe Regression Model & summarize}
+DF_simple = recipe(AnnualCharges ~ AnnualIncome, DF)
+
+lm_model = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(DF_simple)
+
+lm_fit = fit(lm_wflow, DF)
+
+summary(lm_fit$fit$fit$fit)  #look at adjust R^2 and AnnualIncome est and Y-interecept
+```
+
+```{r predicting AnnualIncomes of 75 and 100?}
+#Manually
+3146.361 + 121.355*75
+3146.361 + 121.355*100
+
+#Using predict function
+testdata = data.frame(AnnualIncome = c(75,100))
+predict(lm_fit, new_data = testdata)
+```
+
+```{r Prediction Intervals }
+
+#Prediction intervals
+temp_var = predict(lm_fit$fit$fit$fit, interval = "prediction") #accessing the fit object with the three $fit
+new_df = cbind(DF, temp_var)
+
+ggplot(new_df, aes(x = AnnualIncome, y = AnnualCharges)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  geom_line(aes(y=lwr), color = "red", linetype = "dashed") +
+  geom_line(aes(y=upr), color = "red", linetype = "dashed") +
+  theme_bw() 
+```
+
+
+
+

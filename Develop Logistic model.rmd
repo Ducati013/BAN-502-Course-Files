@@ -1,0 +1,80 @@
+
+```{r libraries}
+library(tidyverse)
+library(tidymodels)
+library(e1071) #often needed for various statistical tasks
+library(ROCR) #for threshold selection
+credit = read_csv("CSData.csv")
+df=credit
+
+df = df %>%  drop_na()
+```
+
+```{r factor conversion}
+# you need to convert categoricals to factors
+colnames(df)[1] = "responseVar"
+
+df = df %>% mutate(responseVar = as_factor(responseVar)) %>% 
+  mutate(responseVar = fct_recode(responseVar, "No" = "0", "Yes" = "1" )) 
+
+#filter for this data set
+df = df %>% filter(RevolvingUtilizationOfUnsecuredLines < 2) %>%
+  filter(DebtRatio < 5) %>% 
+  filter(MonthlyIncome < 20000) %>% drop_na() %>% 
+  filter(NumberOfOpenCreditLinesAndLoans < 40) %>%
+  filter(NumberOfTimes90DaysLate < 10) %>% 
+  filter(NumberRealEstateLoansOrLines < 10) %>% 
+  filter(NumberOfDependents < 10)
+```
+
+
+Build a model with all of the variables.   
+```{r build the modeal with all the variables}
+df_model = 
+  logistic_reg(mode = "classification") %>% #note the use of logistic_reg and mode = "classification"
+  set_engine("glm") #standard logistic regression engine is glm
+
+df_recipe = recipe(responseVar ~.,df)  # this is where you select the columns
+
+logreg_wf = workflow() %>%
+  add_recipe(df_recipe) %>% 
+  add_model(df_model)
+
+df_fit = fit(logreg_wf, df)
+```
+
+```{r}
+predictions = predict(df_fit, df, type="prob") #develop predicted probabilities
+predictions = predict(df_fit, df, type="prob")[2]  # this [2] will only pull the second column
+head(predictions)
+```
+
+
+```{r}
+#Change this next line to the names of your predictions and the response variable in the training data frame
+ROCRpred = prediction(predictions, df$responseVar) 
+
+###You shouldn't need to ever change the next two lines:
+ROCRperf = performance(ROCRpred, "tpr", "fpr")
+plot(ROCRperf, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+```
+```{r area under the curve}
+as.numeric(performance(ROCRpred, "auc")@y.values)
+```
+
+```{r determine the threshold}
+
+#Determine threshold to balance sensitivity and specificity
+#DO NOT modify this code
+opt.cut = function(perf, pred){
+    cut.ind = mapply(FUN=function(x, y, p){
+        d = (x - 0)^2 + (y-1)^2
+        ind = which(d == min(d))
+        c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+            cutoff = p[[ind]])
+    }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+print(opt.cut(ROCRperf, ROCRpred))
+```
+
+

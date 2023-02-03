@@ -1,0 +1,22 @@
+---
+title: "structure and summary"
+output: html_document
+date: "2023-01-31"
+---
+
+
+```{r libraries}
+
+library(titanic)
+library(tidyverse)
+library(tidymodels)
+library(glmnet) #for Lasso, ridge, and elastic net models 
+
+titanic = titanic::titanic_train
+```
+
+```{r Structure and summary}
+
+str(titanic)
+summary(titanic)
+```

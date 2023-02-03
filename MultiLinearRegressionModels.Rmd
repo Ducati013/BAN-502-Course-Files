@@ -1,0 +1,110 @@
+
+
+```{r libraries,warning=FALSE,message=FALSE}
+#install.packages("tidyverse","GGally","gridExtra","car")
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(gridExtra) #used for a little fancy arranging of plots
+library(car) #for the VIF function
+library(glmnet)
+```
+
+```{r read in data file}
+df = read_csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Mod 2/Teams.csv")
+```
+
+```{r examine the df}
+str(df)
+summary(df)
+```
+
+```{r filter to reduce the years}
+df = df %>% filter(yearID >= 1969)
+summary(df$yearID)
+```
+
+```{r begin building model by selecting columns}
+df = df %>% dplyr::select(c("yearID","teamID","W","R","H","HR","RA","HA","HRA"))  #error in select, must use %>% dplyr::select...
+#These variables are W = Wins, R = Runs, H = Hits, HR = Home Runs, RA = Runs Against, HA = Hits Against, HRA = Home Runs Against
+summary(df)
+```
+
+```{r correlation map}
+ggcorr(df,label = TRUE,label_round = 2)
+```
+
+```{r check each predictor used for multicollinearity}
+p1 = ggplot(df, aes(x=R,y=W)) + geom_point() + theme_bw()
+p2 = ggplot(df, aes(x=H,y=W)) + geom_point() + theme_bw()
+p3 = ggplot(df, aes(x=HR,y=W)) + geom_point() + theme_bw()
+grid.arrange(p1,p2,p3, ncol = 2) #arranging ggplot objects in a grid
+```
+
+
+```{r lets build the model & see the summary}
+recipe1 = recipe(W ~ R + H + HR, df)  # recipeResponseVariable ~ predictorVar1 + predictorVar2 + predictorVar3,dataframe)
+
+lm_model = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(recipe1)
+
+lm_fit = fit(lm_wflow, df)
+
+summary(lm_fit$fit$fit$fit)
+
+```
+
+```{r assess multicollinearity via VIF}
+car::vif(lm_fit$fit$fit$fit) #Using the vif function from the the car package  
+# VIF <=1 is great
+# VIF 1>5 moderate correlation
+# VIF >5 implies a high correlation
+```
+
+```{r drop a variable and test results}
+recipe2 = recipe(W ~ R + H, df)  # drop a variable and test results
+
+lm_model = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+
+lm_wflow = 
+  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(recipe2)
+
+lm_fit2 = fit(lm_wflow, df)
+
+summary(lm_fit2$fit$fit$fit)
+
+```
+
+```{r check for multicollinearity with VIF}
+car::vif(lm_fit2$fit$fit$fit) #Using the vif function from the the car package  
+# VIF <=1 is great
+# VIF 1>5 moderate correlation
+# VIF >5 implies a high correlation
+```
+
+```{r check residuals a plot each of the 3 predictors and verify the histogram has a normal distribution}
+df = df %>% mutate(resid2 = lm_fit2$fit$fit$fit$residuals)
+
+# We create separate residual plots for each of the three predictor variables in our model.  
+p1 = ggplot(df, aes(x=R,y=resid2)) + geom_point() + theme_bw()
+p2 = ggplot(df, aes(x=H,y=resid2)) + geom_point() + theme_bw()
+p3 = ggplot(df, aes(x=HR,y=resid2)) + geom_point() + theme_bw()
+p4 = ggplot(df, aes(x=resid2))      + geom_histogram() + theme_bw()
+
+grid.arrange(p1,p2,p3,p4, ncol = 2) #arranging ggplot objects in a grid
+```
+
+
+
+
+

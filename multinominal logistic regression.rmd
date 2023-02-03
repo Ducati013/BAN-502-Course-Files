@@ -1,0 +1,85 @@
+
+[multinominal article with examples](https://stats.oarc.ucla.edu/r/dae/multinomial-logistic-regression/)
+
+```{r library}
+
+require(foreign)
+require(nnet)
+require(ggplot2)
+require(reshape2)
+
+ml <- read.dta("https://stats.idre.ucla.edu/stat/data/hsbdemo.dta")
+```
+
+
+```{r descriptive stats}
+with(ml, table(ses, prog))
+with(ml, do.call(rbind, tapply(write, prog, function(x) c(Mean = mean(x), StdDev = sd(x)))))
+```
+
+
+```{r select baseline}
+#choose level of our outcome  we wish to use as out baseline
+#run our model using multinom. The multinom package does not include p-value calculation for the regression coefficients, so we calculate p-values using Wald tests (here z-tests)
+
+ml$prog2 <- relevel(ml$prog, ref = "academic")
+test <- multinom(prog2 ~ ses + write, data = ml)
+
+```
+
+```{r summaries }
+cat("\n","Summary:\n")
+summary(test)
+# summary if you just want coefficient summary
+cat("\n","Coefficient Summary :\n")
+z <- summary(test)$coefficients/summary(test)$standard.errors
+z
+```
+
+```{r 2 tailed test}
+
+# 2-tailed z test
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+p
+
+```
+
+```{r exponentiate the coefficients from our model to see these risk ratios.}
+## extract the coefficients from the model and exponentiate
+exp(coef(test))
+```
+##
+-   The relative risk ratio for a one-unit increase in the variable write is .9437 for being in general program vs. academic program.
+-   The relative risk ratio switching from ses = 1 to 3 is .3126 for being in general program vs. academic program.
+
+```{r calculate predicted probabilities for each of our outcome levels using the fitted function}
+head(pp <- fitted(test))
+```
+
+```{r examine the changes in predicted probability associated with one of our two variables}
+# we can create small datasets varying one variable while holding the other constant. We will first do this holding write at its mean and examining the predicted probabilities for each level of ses.
+dses <- data.frame(ses = c("low", "middle", "high"), write = mean(ml$write))
+predict(test, newdata = dses, "probs")
+```
+
+```{r using the predicted probabilities is to look at the averaged predicted probabilities for different values of the continuous predictor variable write within each level of ses.}
+dwrite <- data.frame(ses = rep(c("low", "middle", "high"), each = 41), write = rep(c(30:70),
+    3))
+
+## store the predicted probabilities for each value of ses and write
+pp.write <- cbind(dwrite, predict(test, newdata = dwrite, type = "probs", se = TRUE))
+
+## calculate the mean probabilities within each level of ses
+by(pp.write[, 3:5], pp.write$ses, colMeans)
+```
+```{r plot with the above pp.write object predicted probabilities}
+## melt data set to long for ggplot2
+lpp <- melt(pp.write, id.vars = c("ses", "write"), value.name = "probability")
+head(lpp)  # view first few rows
+
+## plot predicted probabilities across write values for each level of ses
+## facetted by program type
+ggplot(lpp, aes(x = write, y = probability, colour = ses)) + geom_line() + facet_grid(variable ~
+    ., scales = "free")
+```
+

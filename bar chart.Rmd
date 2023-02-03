@@ -1,0 +1,9 @@
+---
+title: "barchart"
+output: html_document
+date: "2023-01-31"
+---
+
+```{r}
+ggplot(titanic, aes(x=Pclass, fill = Survived)) + geom_bar() + theme_bw() #+ coord_flip() This will flip the coords
+```

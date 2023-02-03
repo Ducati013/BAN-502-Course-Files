@@ -1,0 +1,108 @@
+
+
+```{r libraries, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(e1071) #often needed for various statistical tasks
+library(ROCR) #for threshold selection
+library(Hmisc) # for histogram on all columns
+df = read_csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Mod 3 Bias& Logistical regression/parole.csv")
+# hist(df)
+
+df = df %>%  drop_na()
+```
+
+
+```{r factor conversion}
+# you need to convert categoricals to factors
+colnames(df)[9] = "responseVar"
+
+# df = df %>% mutate(responseVar = as_factor(responseVar)) %>% 
+#   mutate(responseVar = fct_recode(responseVar, "No" = "0", "Yes" = "1" )) 
+
+# This recodes the factors as names
+df = df %>% mutate(male = as_factor(male)) %>% 
+  mutate(male = fct_recode(male, "male" = "1", "female" = "0" )) %>% 
+  mutate(race = as_factor(race)) %>% 
+  mutate(race = fct_recode(race, "white" = "1", "otherwise" = "2" )) %>% # race
+  mutate(state = as_factor(state)) %>%
+  mutate(state = fct_recode(state, "Kentucky" = "2", "Louisiana" = "3", "Virginia" ="4", "Other" = "1" )) %>% # state
+  mutate(crime = as_factor(crime)) %>%
+  mutate(crime = fct_recode(crime, "larceny" = "2", "drug-related" = "3", "driving-related" = "4", "Other" = "1" )) %>%# crime
+  mutate(multiple.offenses = as_factor(multiple.offenses)) %>%
+  mutate(multiple.offenses = fct_recode(multiple.offenses, "multiple offenses" = "1", "otherwise" = "0" )) %>% # multiple.offenses
+  mutate(responseVar = as_factor(responseVar)) %>%
+  mutate(responseVar = fct_recode(responseVar, "Violated" = "1", "NoViolations" = "0" ))# violator variables
+
+```
+
+```{r Q2 set the train&test sizes_ also set up the k-folds}
+set.seed(12345)
+df2 = initial_split(df, prop = 0.70, strata = responseVar)
+train = training(df2)
+test = testing(df2)
+cat("\nNumber of rows in train set:",nrow(train),"\n\n")
+#folds = vfold_cv(train, v = 10)
+
+
+# rearrange the factor levels to put the positive class second (last)
+train = train %>% mutate(responseVar = fct_relevel(responseVar, c("No","Yes")))  
+levels(train$responseVar)
+#hist(train)
+```
+
+
+```{r Q 14 train accuracy}
+# build model
+train_model = 
+  logistic_reg(mode = "classification") %>% #note the use of logistic_reg and mode = "classification"
+  set_engine("glm") #standard logistic regression engine is glm
+# select predictors
+train_recipe = recipe(responseVar ~ state + multiple.offenses + race,train) %>%   
+  step_dummy(all_nominal(), -all_outcomes()) #exclude the response variable from being dummy converted 
+
+# build the flow & fit
+logreg_wf = workflow() %>%
+  add_recipe(train_recipe) %>% 
+  add_model(train_model)
+# fit it
+train_fit = fit(logreg_wf, train)
+# predict it
+predictions = predict(train_fit, train, type="prob")[2]
+# convert to a table
+train_table = table(train$responseVar,predictions > 0.5)
+train_table
+
+
+#check for accuracy
+train_accuracy0    = (train_table[1,1]+train_table[2,2])/nrow(train)  # # nrow(train) table[row,col]
+cat("Training Set Accuracy    = ", round(train_accuracy0   , digits = 3))
+
+```
+
+```{r  Q14 Never do Testing set accuracy on the testing set to 3 decimals}
+# build model
+test_model = 
+  logistic_reg(mode = "classification") %>% #note the use of logistic_reg and mode = "classification"
+  set_engine("glm") #standard logistic regression engine is glm
+# select predictors
+test_recipe = recipe(responseVar ~ state + multiple.offenses + race,test) %>%   
+  step_dummy(all_nominal(), -all_outcomes()) #exclude the response variable from being dummy converted 
+
+# build the flow & fit
+logreg_wf = workflow() %>%
+  add_recipe(test_recipe) %>% 
+  add_model(test_model)
+# fit it
+test_fit = fit(logreg_wf, test)
+# predict it
+predictions = predict(test_fit, test, type="prob")[2]
+# convert to a table
+test_table = table(test$responseVar,predictions > 0.5)
+test_table
+#check for accuracy
+accuracy0    = (test_table[1,1]+test_table[2,2])/nrow(test)  # # nrow(train) table[row,col]
+cat("Testing Set Accuracy    = ", round(accuracy0   , digits = 3))
+
+```
+

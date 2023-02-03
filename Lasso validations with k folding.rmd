@@ -1,0 +1,111 @@
+---
+title: "Lasso testing"
+output: html_document
+date: "2023-01-30"
+---
+
+```{r libraries & read in file }
+library(tidyverse) #tidyverse set of packages and functions
+library(tidymodels)
+library(glmnet) #for Lasso, ridge, and elastic net models 
+library(GGally) #create ggcorr and ggpairs plots
+library(ggcorrplot) #create an alternative to ggcorr plots
+library(MASS) #access to forward and backward selection algorithms
+library(leaps) #best subset selection
+library(lmtest) #for the dw test
+library(splines) #for nonlinear fitting
+library(car) #for calculating the variance inflation factor
+
+
+ames = read_csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Mod 3 Bias& Logistical regression/AmesData.csv")
+
+```
+
+
+```{r select subset columns}
+ames2 = ames %>% dplyr::select("SalePrice", "OverallQual", "GrLivArea", "GarageCars", "GarageArea", "TotalBsmtSF", "1stFlrSF", "FullBath", "YearBuilt", "YearRemodAdd", "TotRmsAbvGrd", "Neighborhood")
+```
+
+
+```{r set the train&test sizes_ also set up the k-folds}
+set.seed(123)
+ames_split = initial_split(ames2, prop = 0.80, strata = SalePrice)
+train = training(ames_split)
+test = testing(ames_split)
+
+folds = vfold_cv(train, v = 10)
+```
+
+```{r develop the recipe_models_flows_&tuning, warning=FALSE, error=FALSE}
+ames_recipe = recipe(SalePrice ~., train) %>% #add all variables via ~.
+  step_ns(OverallQual, deg_free = 4) %>% #add the spline transformation to the recipe
+  step_other(Neighborhood, threshold = 0.01) %>% #collapses small Neighborhoods into an "Other" group
+  step_dummy(all_nominal()) %>% #makes Neighborhood categorical
+  step_center(all_predictors()) %>% #centers the predictors
+  step_scale(all_predictors()) #scales the predictors
+  
+lasso_model = #give the model type a name 
+  linear_reg(penalty = tune(), mixture = 1) %>% #mixture = 1 sets up Lasso, 0 sets up Ridge
+  set_engine("glmnet") #specify the specify type of linear tool we want to use 
+
+#try different lambda values ranging from 0 to 10000 in increments of 100                        
+#you may need to tweak this range 
+lambda_grid = expand.grid(penalty = seq(0,10000,100)) #consider a sequence of values from 0 to 10000 by 100
+
+lasso_wflow =
+  workflow() %>% 
+  add_model(lasso_model) %>% 
+  add_recipe(ames_recipe)
+
+lasso_res = lasso_wflow %>% 
+  tune_grid(
+    resamples = folds, #new line
+    grid = lambda_grid
+  )
+```
+
+
+```{r view performance and penalties, include=FALSE}
+# not necessary but will be good to see results. 
+lasso_res %>%
+  collect_metrics()
+```
+
+```{r graphically visualize the results_ not necessary but cool to see, include= FALSE}
+# https://juliasilge.com/blog/lasso-the-office/
+# see how our performance metrics change as we change the penalty value.  
+lasso_res %>%
+  collect_metrics() %>%
+  ggplot(aes(penalty, mean, color = .metric)) +
+  geom_errorbar(aes(
+    ymin = mean - std_err,
+    ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+```
+
+```{r gives best r^2 result and penalty}
+
+# shows exact best value  
+best_rsq = lasso_res %>%
+  select_best("rsq")
+best_rsq
+
+# Finish the model with the best penalty to maximize R squared
+final_lasso = lasso_wflow %>% finalize_workflow(best_rsq)   
+
+# Shows the model performance on the testing set  
+last_fit(          
+  final_lasso,
+  ames_split) %>%
+  collect_metrics()
+
+best_fit =last_fit(final_lasso, ames_split) %>%  collect_metrics() 
+# best_fit %>% dplyr::select('.metric','.estimate') %>% filter(row_number() ==2 ) this will allow to filter to the r^2 estimate value
+
+```

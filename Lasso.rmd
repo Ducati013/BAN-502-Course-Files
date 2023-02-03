@@ -1,0 +1,56 @@
+---
+title: "Lasso  model" # not working ATM
+output: html_document
+date: "2023-01-31"
+---
+
+
+```{r Libraries and Load Titanic Data from the titanic package.}
+library(titanic)
+library(tidyverse)
+library(tidymodels)
+library(glmnet) #for Lasso, ridge, and elastic net models 
+library(tune)
+
+titanic = titanic::titanic_train # load the titanic data
+```
+
+```{r convert to factor}
+titanic = titanic %>% mutate(Survived = as_factor(Survived)) %>% 
+  mutate(Survived = fct_recode(Survived, "No" = "0", "Yes" = "1" )) %>%   #renamed
+  mutate(Pclass = as_factor(Pclass)) %>% mutate(Sex = as_factor(Sex))
+# str(titanic)      # structure
+# summary(titanic)  # a summary 
+``` 
+
+```{r build the lasso model}
+lasso_model = #give the model type a name 
+  logistic_reg(mixture = 1) %>% #mixture = 1 sets up Lasso
+  set_engine("glmnet") 
+
+titanic_recipe = recipe(Survived ~ Pclass + Sex + Age + SibSp + Parch, titanic) %>% 
+  step_dummy(all_nominal(), -all_outcomes()) %>% #makes sure factors are treated as categorical
+  step_naomit(Age) %>% #omit the missing data
+  step_center(all_predictors()) %>% #centers the predictors
+  step_scale(all_predictors()) #scales the predictors
+
+lasso_wflow =
+  workflow() %>% 
+  add_model(lasso_model) %>% 
+  add_recipe(titanic_recipe)
+
+lasso_fit = fit(lasso_wflow, titanic)
+```
+
+```{r lasso fit }
+lasso_fit %>%
+  pull_workflow_fit() %>%
+  pluck("fit")  
+```
+
+```{r fit with selected lamda value}
+lasso_fit %>%
+  pull_workflow_fit() %>%
+  pluck("fit")  %>% 
+  coef(s = 0.011190) #show the coefficients for our selected lambda value
+```
