@@ -1,0 +1,434 @@
+---
+title: "Random Forests Chunks"
+author: "Kevin Foley"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r 2. Library, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(mice)
+library(VIM)
+library(ranger)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(e1071)
+library(xgboost)
+library(usemodels)
+library(nnet) #our neural network package
+library(stacks)
+library(vip) #variable importance
+```
+
+```{r 3. read file and clean the data}
+
+train = read.csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Final Project2/Stacked Final individual pieces/ames_student-1.csv")
+
+train = train %>% mutate_if(is.character,as_factor) #%>% 
+#                   mutate(failure = as_factor(failure)) %>% 
+#                   mutate(failure = fct_recode(failure, "No" = "0", "Yes" = "1" )) %>% 
+#                   mutate(attribute_2 = as_factor(attribute_2)) %>% 
+#                   mutate(attribute_3 = as_factor(attribute_3)) 
+
+
+# test = test %>% mutate_if(is.character,as_factor) %>% 
+#                   mutate_if(is.integer,as_factor) #%>% 
+#                   #mutate(failure = fct_recode(failure, "No" = "0", "Yes" = "1" )) 
+#                   
+# test$id = as.integer(test$id)  #convert is col back to int
+#  
+ 
+```
+
+Now we'll split the data.   
+```{r 5. solit seed and split}
+set.seed(123) 
+df_split = initial_split(train, prop = 0.7, strata = Above_Median) #70% in training
+train = training(df_split)
+test = testing(df_split)
+
+# train1 = train
+# test1 = test
+```
+
+Set-up our folds
+```{r  6. set up folds}
+set.seed(123)
+folds = vfold_cv(train, v = 5)
+
+#summary(train)
+```
+
+Let's build all the models: A classification tree, a random forest, and an XGB model. First, and tune them.    
+```{r 7. build recipes}
+
+failure_recipe = recipe(Above_Median ~ ., train) %>%  
+                step_normalize(all_predictors(),- all_nominal()) %>% # normalizes numeric predictors, not needed for categorical
+                step_dummy(all_nominal(), -all_outcomes()) # to anything that is nominal(), but not the response
+                           # all_numeric_predictors()) #<- another possible
+                        # step_impute_mean(all_numeric_predictors()) %>%
+
+failure_recipe1 = recipe(Above_Median ~Gr_Liv_Area + Year_Built + Full_Bath + First_Flr_SF + Total_Bsmt_SF + Garage_Area + Lot_Area + Garage_Type + Overall_Qual + Garage_Cars, train) %>%
+   step_normalize(all_predictors(),- all_nominal()) %>% # normalizes numeric predictors, not needed for categorical
+     #step_other(Neighborhood, threshold = 0.02) %>% #collapses small Neighborhoods into an "Other" group
+     # step_other(c(House_Style,Foundation,Overall_Cond,Sale_Condition,Sale_Type),threshold = 0.05 ) %>% 
+    #step_other(Foundation, threshold = 0.01) %>% 
+     step_dummy(all_nominal(), -all_outcomes()) 
+                       
+ctrl_grid = control_stack_grid() #necessary for working with the stacks package
+ctrl_res = control_stack_resamples() #necessary for working with the stacks package
+```
+
+```{r   str and summary, include =FALSE}
+str(train)
+summary(train)
+```
+
+# random forest 1
+
+```{r 11. Random Forest Model , eval=TRUE}
+### This model takes awhile, so I've commented it out and saved the resamples to an RDS. 
+ start_rf_time <- Sys.time()
+#  rf_recipe =  failure_recipe   # tree_recipe %>%
+    #step_normalize(all_predictors(), -all_nominal()) #normalize the numeric predictors, not needed for categorical
+     # step_dummy(all_nominal(),-all_outcomes())
+rf_recipe = failure_recipe
+rf_model = rand_forest(mtry = tune(), min_n = tune(), trees = 200) %>% #add tuning of mtry and min_n parameters
+    set_engine("ranger", importance = "permutation") %>% #added importance metric
+    set_mode("classification")
+#
+rf_wflow =
+    workflow() %>%
+    add_model(rf_model) %>%
+    add_recipe(rf_recipe)
+#
+  set.seed(1234)
+  rf_res = tune_grid(
+    rf_wflow,
+    resamples = folds,
+    grid = 200,
+    control = ctrl_grid
+ )
+end_rf_time <- Sys.time()
+end_rf_time - start_rf_time
+
+saveRDS(rf_res,"rf_res.rds") # ( takes about 16.55 mins)
+```
+```{r 12. save rft rds file}
+# saveRDS(rf_res,"rf_res.rds")
+```
+```{r 13. read rft rds file}
+rf_res = readRDS("rf_res.rds")
+```
+
+```{r  14. rf visual}
+rf_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(title ="Random Forests 1",subtitle="failure_recipe", y = "Accuracy")+
+  geom_text(aes(label=ifelse(mean>.925,as.character(min_n),'')),hjust=0,vjust=0)
+
+rf_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(labs(title ="Random Forests 1",subtitle="failure_recipe", y = "Accuracy", x = NULL))
+```
+
+
+# Random Forest2 
+```{r 11. Random Forest Model , eval=TRUE}
+### This model takes awhile, so I've commented it out and saved the resamples to an RDS. 
+ start_rf_time <- Sys.time()
+#  rf_recipe =  failure_recipe   # tree_recipe %>%
+    #step_normalize(all_predictors(), -all_nominal()) #normalize the numeric predictors, not needed for categorical
+     # step_dummy(all_nominal(),-all_outcomes())
+rf_recipe1 = failure_recipe1
+rf_model1 = rand_forest(mtry = tune(), min_n = tune(), trees = 200) %>% #add tuning of mtry and min_n parameters
+    set_engine("ranger", importance = "permutation") %>% #added importance metric
+    set_mode("classification")
+#
+rf_wflow1 =
+    workflow() %>%
+    add_model(rf_model1) %>%
+    add_recipe(rf_recipe1)
+#
+  set.seed(1234)
+rf_res1 = tune_grid(
+    rf_wflow1,
+    resamples = folds,
+    grid = 200,
+    control = ctrl_grid
+ )
+end_rf_time <- Sys.time()
+end_rf_time - start_rf_time
+
+saveRDS(rf_res1,"rf_res1.rds") # ( takes about 8.30 mins)
+```
+```{r 12. save rft rds file}
+# saveRDS(rf_res,"rf_res1.rds")
+```
+```{r 13. read rft rds file}
+rf_res1 = readRDS("rf_res1.rds")
+```
+
+```{r  14. rf visual}
+rf_res1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(title ="Random Forests 2",subtitle= "failure_recipe1",y = "Accuracy")+
+  geom_text(aes(label=ifelse(mean>.925,as.character(min_n),'')),hjust=0,vjust=0)
+
+rf_res1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(title ="Random Forests 2",subtitle="failure_recipe", y = "Accuracy", x = NULL)
+```
+
+# RFtuned 1  failure_recipe  
+
+Train accuracy:    0.9951 
+Train sensitivity: 0.9943 
+
+Test  accuracy:    0.9058 
+Test sensitivity: 0.934 
+
+
+```{r 15. RFt_tuned model , eval=FALSE}
+ start_time <- Sys.time()
+ rft_recipe = failure_recipe  # recipe(failure ~., train) %>%   # there are only 7 predictors in this recipe!
+#   step_dummy(all_nominal(), -all_outcomes())
+# 
+ rft_model = rand_forest(mtry = tune(), min_n = tune(), trees = 100) %>% #add tuning of mtry and min_n parameters
+   #setting trees to 100 here should also speed things up a bit, but more trees might be better
+   set_engine("ranger", importance = "permutation") %>% #added importance metric
+   set_mode("classification")
+# 
+ rft_wflow = 
+   workflow() %>% 
+   add_model(rft_model) %>% 
+   add_recipe(rft_recipe)
+# 
+ rft_grid = grid_regular(
+   mtry(range = c(40, 120)), #these values determined through significant trial and error  # this came up as columns requested ie(predictors er msg:8 columns were requested but there were 7 predictors in the data. 7 will be used) 
+   min_n(range = c(5, 15)), #these values determined through significant trial and error
+   levels = 23
+ )
+# 
+ set.seed(1234)
+rft_res = tune_grid(    
+   rft_wflow,
+   resamples = folds,
+   grid = rft_grid, #use the tuning grid
+   control = ctrl_grid
+ )
+end_time <- Sys.time()
+round(end_time - start_time, digits = 2) # comment out if you want to print and not see the time difference of
+#*run_time: `r round(endTime-startTime,digits =2)` seconds.*
+
+#saveRDS(rft_res,"rft_res.rds")  #(about 11.18 mins)
+
+```
+```{r 17. save rft rds file}
+# saveRDS(rft_res,"rft_res.rds")
+```
+```{r 18. read rft rds file}
+rft_res = readRDS("rft_res.rds")
+```
+```{r  16. rft visual}
+p1 = rft_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(title= "Rndom Forest Tuned 1",subtitle = "failure recipe",y = "Accuracy")+
+  geom_text(aes(label=ifelse(mean>.925,as.character(min_n),'')),hjust=0,vjust=0)
+
+p2 = rft_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(title ="Random Forests Tuned 1",subtitle="failure_recipe", y = "Accuracy", x = NULL)
+# library(gridExtra) needed for grid.arrange()
+p1
+p2
+```
+# accuracy on RF tuned 1
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_rf = select_best(rft_res, "accuracy")
+
+final_rf = finalize_workflow(
+  rft_wflow,
+  best_rf
+)
+
+final_rf
+final_rf_fit = fit(final_rf, train)
+final_rf_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_rf_fit, train)
+auto_train =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_rf_fit, test)
+head(testpredrf)
+auto_test = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test
+cat(strrep("*",25),"END",strrep("*",25))
+```
+
+
+# RF Tuned2
+```{r 15. RFt_tuned model , eval=FALSE}
+ start_time <- Sys.time()
+ rft_recipe1 = failure_recipe1  # recipe(failure ~., train) %>%
+#   step_dummy(all_nominal(), -all_outcomes())
+# 
+ rft_model1 = rand_forest(mtry = tune(), min_n = tune(), trees = 100) %>% #add tuning of mtry and min_n parameters
+   #setting trees to 100 here should also speed things up a bit, but more trees might be better
+   set_engine("ranger", importance = "permutation") %>% #added importance metric
+   set_mode("classification")
+# 
+ rft_wflow1 = 
+   workflow() %>% 
+   add_model(rft_model1) %>% 
+   add_recipe(rft_recipe1)
+# 
+ rft_grid1 = grid_regular(
+   mtry(range = c(0, 23)), #these values determined through significant trial and error
+   min_n(range = c(5, 15)), #these values determined through significant trial and error
+   levels = 15
+ )
+# 
+set.seed(1234)
+rft_res1 = tune_grid(    # the tune grid is wrong for the add candidates section....Why
+   rft_wflow1,
+   resamples = folds,
+   grid = rft_grid1, #use the tuning grid
+   control = ctrl_grid
+ )
+ end_time <- Sys.time()
+round(end_time - start_time, digits = 2) # comment out if you want to print and not see the time difference of
+#*run_time: `r round(endTime-startTime,digits =2)` seconds.*
+
+saveRDS(rft_res1,"rft_res1.rds")  #(about3.81 mins)
+
+```
+```{r 17. save rft rds file}
+# saveRDS(rft_res,"rft_res.rds")
+```
+```{r 18. read rft rds file}
+rft_res1 = readRDS("rft_res1.rds")
+```
+```{r  16. rft visual}
+rft_res1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(title= "Random Forest Tuned 2", subtitle="failure_recipe1",y = "Accuracy")
+
+ rft_res1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(title ="Random Forests Tuned 2",subtitle="failure_recipe1", y = "Accuracy", x = NULL)
+```
+
+# accuracy on RF tuned 2
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_rf1 = select_best(rft_res1, "accuracy")
+
+final_rf1 = finalize_workflow(
+  rft_wflow1,
+  best_rf
+)
+
+final_rf
+final_rf_fit1 = fit(final_rf1, train)
+final_rf_fit1 %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_rf_fit1, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_rf_fit1, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train1
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test1
+cat(strrep("*",25),"END",strrep("*",25))
+```

@@ -1,0 +1,511 @@
+---
+title: "Neural Networks"
+author: "Kevin Foley"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r 2. Library, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(mice)
+library(VIM)
+library(ranger)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(e1071)
+library(xgboost)
+library(usemodels)
+library(nnet) #our neural network package
+library(stacks)
+library(vip) #variable importance
+```
+
+```{r 3. read file and clean the data}
+
+train = read.csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Final Project2/Stacked Final individual pieces/ames_student-1.csv")
+
+train = train %>% mutate_if(is.character,as_factor) 
+
+```
+
+Now we'll split the data.   
+```{r 5. solit seed and split}
+set.seed(123) 
+df_split = initial_split(train, prop = 0.7, strata = Above_Median) #70% in training
+train = training(df_split)
+test = testing(df_split)
+
+# train1 = train
+# test1 = test
+```
+
+Set-up our folds
+```{r  6. set up folds}
+set.seed(123)
+folds = vfold_cv(train, v = 5)
+
+#summary(train)
+```
+
+Let's build all the models: A classification tree, a random forest, and an XGB model. First, and tune them.    
+```{r 7. build recipes}
+
+failure_recipe = recipe(Above_Median ~ ., train) %>%  
+                step_normalize(all_predictors(),- all_nominal()) %>% # normalizes numeric predictors, not needed for categorical
+                step_dummy(all_nominal(), -all_outcomes()) # to anything that is nominal(), but not the response
+                           # all_numeric_predictors()) #<- another possible
+                        # step_impute_mean(all_numeric_predictors()) %>%
+
+failure_recipe1 = recipe(Above_Median ~ Gr_Liv_Area + Year_Built + Full_Bath + First_Flr_SF + Total_Bsmt_SF + Garage_Area + Lot_Area + Garage_Type + Overall_Qual + Garage_Cars, train) %>%
+   step_normalize(all_predictors(),- all_nominal()) %>%
+     step_dummy(all_nominal(), -all_outcomes()) 
+                       
+ctrl_grid = control_stack_grid() #necessary for working with the stacks package
+ctrl_res = control_stack_resamples() #necessary for working with the stacks package
+```
+
+
+# NeuralNetworks
+```{r 19. Auto Neural Network model , eval=FALSE}
+ start_time = Sys.time() #for timing
+# 
+ nn0_recipe = failure_recipe  #recipe(failure ~., train) %>%
+#   # step_normalize(all_predictors(), -all_nominal()) %>% #normalize the numeric predictors, not needed for categorical
+#   # step_dummy(all_nominal(), -all_outcomes())
+# 
+nn0_model = 
+   mlp(hidden_units = tune(), penalty = tune(), 
+       epochs = tune()) %>%
+   set_mode("classification") %>% 
+   set_engine("nnet", verbose = 0) #verbose = 0 reduces output from the model
+#   
+nn0_workflow <- 
+   workflow() %>% 
+   add_recipe(nn0_recipe) %>% 
+   add_model(nn0_model) 
+# 
+set.seed(1234)
+neural_res <-
+   tune_grid(nn0_workflow, 
+             resamples = folds, 
+             grid = 25,
+             control = ctrl_grid)
+# 
+end_time = Sys.time()
+end_time-start_time
+
+saveRDS(neural_res,"neural_res.rds")  # (about 1.56 mins)
+
+```
+```{r 20. save nn0 RDS}
+# saveRDS(neural_res1,"neural_res.rds")
+```
+```{r 21. read nn0 RDS}
+neural_res = readRDS("neural_res.rds")
+```
+
+```{r 21a this is the visual that can be used to tune}
+neural_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, hidden_units, penalty, epochs) %>%
+  pivot_longer(hidden_units:epochs,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(title = "NeuralNetworks",subtitle="failure_recipe", x = NULL, y = "Accuracy")
+```
+
+```{r  21b tuning visual looking at epochs }
+neural_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(hidden_units = factor(hidden_units)) %>%
+  ggplot(aes(penalty, mean, color = epochs)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  facet_wrap(~hidden_units, ncol =2 ) + 
+  labs(title = "NeuralNetworks",subtitle="failure_recipe", y = "Accuracy")
+```
+
+# accuracy on neural networks  
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_neural_res = select_best(neural_res, "accuracy")
+
+final_neural_res = finalize_workflow(
+  nn0_workflow,
+  best_neural_res
+)
+
+final_neural_res
+final_neural_res_fit = fit(final_neural_res, train)
+final_neural_res_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_neural_res_fit, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_neural_fit1, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test
+cat(strrep("*",25),"END",strrep("*",25))
+```
+
+
+
+
+
+# Neural Networks 2
+```{r 19. Auto Neural Network model , eval=FALSE}
+ start_time = Sys.time() #for timing
+# 
+nn0_recipe1 = failure_recipe1  #recipe(failure ~., train) %>%
+#   # step_normalize(all_predictors(), -all_nominal()) %>% #normalize the numeric predictors, not needed for categorical
+#   # step_dummy(all_nominal(), -all_outcomes())
+# 
+nn0_model = 
+   mlp(hidden_units = tune(), penalty = tune(), 
+       epochs = tune()) %>%
+   set_mode("classification") %>% 
+   set_engine("nnet", verbose = 0) #verbose = 0 reduces output from the model
+#   
+nn0_workflow <- 
+   workflow() %>% 
+   add_recipe(nn0_recipe1) %>% 
+   add_model(nn0_model) 
+# 
+set.seed(1234)
+neural_res1 <-
+   tune_grid(nn0_workflow, 
+             resamples = folds, 
+             grid = 25,
+             control = ctrl_grid)
+# 
+end_time = Sys.time()
+end_time-start_time
+
+saveRDS(neural_res1,"neural_res1.rds")  # (about 1.56 mins)
+
+```
+```{r 20. save nn0 RDS}
+# saveRDS(neural_res1,"neural_res1.rds")
+```
+```{r 21. read nn0 RDS}
+neural_res1 = readRDS("neural_res1.rds")
+```
+
+```{r 21a this is the visual that can be used to tune}
+neural_res1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, hidden_units, penalty, epochs) %>%
+  pivot_longer(hidden_units:epochs,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(title = "NeuralNetworks 2",subtitle = "failure_recipe1", x = NULL, y = "Accuracy")
+```
+
+```{r  21b tuning visual looking at epochs }
+neural_res1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(hidden_units = factor(hidden_units)) %>%
+  ggplot(aes(penalty, mean, color = epochs)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  facet_wrap(~hidden_units, ncol =2 ) + 
+  labs(title = "NeuralNetworks 2",subtitle = "failure_recipe1", y = "Accuracy")
+```
+
+# accuracy on neural networks 2 
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_neural_res1 = select_best(neural_res1, "accuracy")
+
+final_neural_res = finalize_workflow(
+  nn0_workflow,
+  best_neural_res1
+)
+
+final_neural_res
+final_neural_res_fit = fit(final_neural_res, train)
+final_neural_res_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_neural_res_fit, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_neural_res_fit, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train1
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test1
+cat(strrep("*",25),"END",strrep("*",25))
+```
+
+# Tuned Neural Network 1
+```{r 22. Tuned Neural Network Model, eval=FALSE}
+# This model also takes awhile to run. Saved to RDS. 
+ start_nn_time <- Sys.time()
+# 
+neural_grid = grid_regular(
+   hidden_units(range = c(2,6)), # must be whole numbers
+   penalty(range = c(-10,-1)),
+   #penalty is a weird one, you are not setting the actual penalty itself, you are setting the range of x in 10^x
+   epochs(range = c(0,600)),
+   levels = 10
+ )
+# 
+nn_recipe = failure_recipe #%>%
+    #step_normalize(all_predictors(), -all_nominal()) #normalize the numeric predictors, not needed for categorical
+# 
+nn_model =
+    mlp(hidden_units = tune(), penalty = tune(),
+        epochs = tune()) %>%
+    set_mode("classification") %>%
+    set_engine("nnet", verbose = 0) #verbose = 0 reduces output from the model
+# 
+nn_workflow <-
+    workflow() %>%
+    add_recipe(nn_recipe) %>%
+  add_model(nn_model)
+ 
+set.seed(1234)
+ neuralt_res <-
+    tune_grid(nn_workflow,
+              resamples = folds,
+              grid = neural_grid,
+              control = ctrl_grid)
+#  
+ end_nn_time <- Sys.time()
+ end_nn_time - start_nn_time
+
+ saveRDS(neuralt_res,"neuralt_res.rds")  # about(26 mins) 
+```
+
+```{r 23. save nn RDS}
+# saveRDS(neuralt_res,"neuralt_res.rds")
+```
+
+```{r 24. read nn RDS}
+neuralt_res = readRDS("neuralt_res.rds")
+```
+
+```{r 21a this is the tuning visual}
+neuralt_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, hidden_units, penalty, epochs) %>%
+  pivot_longer(hidden_units:epochs,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(title = "Tuned Neural Network 1", x = NULL, y = "Accuracy")
+```
+
+```{r  21b tuning visual looking at epochs }
+neuralt_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(hidden_units = factor(hidden_units)) %>%
+  ggplot(aes(penalty, mean, color = epochs)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  facet_wrap(~hidden_units, ncol =2 ) + 
+  labs(title = "Tuned Neural Network 1", y = "Accuracy")
+```
+
+# accuracy on tuned neural networks
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_neural_res1 = select_best(neural_res1, "accuracy")
+
+final_neural_res = finalize_workflow(
+  nn0_workflow,
+  best_neural_res1
+)
+
+final_neural_res
+final_neural_res_fit = fit(final_neural_res, train)
+final_neural_res_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_neural_res_fit, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_neural_res_fit, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train1
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test1
+cat(strrep("*",25),"END",strrep("*",25))
+```
+
+# Tuned Neural Network 2 
+```{r 22. Tuned Neural Network Model, eval=FALSE}
+# This model also takes awhile to run. Saved to RDS. 
+start_nn_time <- Sys.time()
+# 
+neural_grid1 = grid_regular(
+   hidden_units(range = c(2,6)), # must be whole numbers
+   penalty(range = c(-10,-1)),
+   #penalty is a weird one, you are not setting the actual penalty itself, you are setting the range of x in 10^x
+   epochs(range = c(200,500)),
+   levels = 10
+ )
+# 
+nn_recipe1 = failure_recipe1 #%>%
+    #step_normalize(all_predictors(), -all_nominal()) #normalize the numeric predictors, not needed for categorical
+# 
+nn_model1 =
+    mlp(hidden_units = tune(), penalty = tune(),
+        epochs = tune()) %>%
+    set_mode("classification") %>%
+    set_engine("nnet", verbose = 0) #verbose = 0 reduces output from the model
+# 
+nn_workflow1 <-
+    workflow() %>%
+    add_recipe(nn_recipe1) %>%
+  add_model(nn_model1)
+# 
+set.seed(1234)
+neuralt_res1 <-
+    tune_grid(nn_workflow,
+              resamples = folds,
+              grid = neural_grid,
+              control = ctrl_grid)
+#  
+end_nn_time <- Sys.time()
+end_nn_time - start_nn_time
+
+saveRDS(neuralt_res1,"neuralt_res1.rds")  # about(25.64mins)
+```
+
+```{r 23. save nn RDS}
+# saveRDS(neuralt_res,"neuralt_res1.rds")
+```
+
+```{r 24. read nn RDS}
+neuralt_res1 = readRDS("neuralt_res1.rds")
+```
+
+```{r 21a this is the tuning visual}
+neuralt_res1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, hidden_units, penalty, epochs) %>%
+  pivot_longer(hidden_units:epochs,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(title = "Tuned Neural Network 2",x = NULL, y = "Accuracy")
+```
+
+```{r  21b tuning visual looking at epochs }
+neuralt_res1 %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(hidden_units = factor(hidden_units)) %>%
+  ggplot(aes(penalty, mean, color = epochs)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  facet_wrap(~hidden_units, ncol =2 ) + 
+  labs(title = "Tuned Neural Network 2",y = "Accuracy")
+```
+
+# accuracy on tuned neural networks 2 
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_neural_res1 = select_best(neural_res1, "accuracy")
+
+final_neural_res = finalize_workflow(
+  nn0_workflow,
+  best_neural_res1
+)
+
+final_neural_res
+final_neural_res_fit = fit(final_neural_res, train)
+final_neural_res_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_neural_res_fit, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_neural_res_fit, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train1
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test1
+cat(strrep("*",25),"END",strrep("*",25))
+```

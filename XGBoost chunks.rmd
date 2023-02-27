@@ -1,0 +1,429 @@
+---
+title: "XGboost Chunks"
+author: "Kevin Foley"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r 2. Library, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(mice)
+library(VIM)
+library(ranger)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(e1071)
+library(xgboost)
+library(usemodels)
+library(nnet) #our neural network package
+library(stacks)
+library(vip) #variable importance
+```
+
+```{r 3. read file and clean the data}
+
+train = read.csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Final Project2/Stacked Final individual pieces/ames_student-1.csv")
+
+train = train %>% mutate_if(is.character,as_factor) 
+
+```
+
+Now we'll split the data.   
+```{r 5. solit seed and split}
+set.seed(123) 
+df_split = initial_split(train, prop = 0.7, strata = Above_Median) #70% in training
+train = training(df_split)
+test = testing(df_split)
+
+# train1 = train
+# test1 = test
+```
+
+Set-up our folds
+```{r  6. set up folds}
+set.seed(123)
+folds = vfold_cv(train, v = 5)
+
+#summary(train)
+```
+
+Let's build all the models: A classification tree, a random forest, and an XGB model. First, and tune them.    
+```{r 7. build recipes}
+
+failure_recipe = recipe(Above_Median ~ ., train) %>%  
+                step_normalize(all_predictors(),- all_nominal()) %>% # normalizes numeric predictors, not needed for categorical
+                step_dummy(all_nominal(), -all_outcomes()) # to anything that is nominal(), but not the response
+                           # all_numeric_predictors()) #<- another possible
+                        # step_impute_mean(all_numeric_predictors()) %>%
+
+failure_recipe1 = recipe(Above_Median ~ Gr_Liv_Area + Year_Built + Full_Bath + First_Flr_SF + Total_Bsmt_SF + Garage_Area + Lot_Area + Garage_Type + Overall_Qual + Garage_Cars, train) %>%
+   step_normalize(all_predictors(),- all_nominal()) %>%
+     step_dummy(all_nominal(), -all_outcomes()) 
+                       
+ctrl_grid = control_stack_grid() #necessary for working with the stacks package
+ctrl_res = control_stack_resamples() #necessary for working with the stacks package
+```
+
+
+
+
+
+
+# XG BOOST 1
+```{r 25. Automatic_XGBoost , eval = TRUE}
+# _________________________Begin the model Autogenerating Model____________________________________________________
+# if we knit this we need to knit this out and reload to save time.
+# remove final xg fit because it it taking up some memory 
+start_time = Sys.time() #for timing
+#
+xgboost0_recipe <- failure_recipe %>%
+   step_novel(all_nominal(), -all_outcomes()) %>%
+   step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>%
+   step_zv(all_predictors())
+#
+xgboost0_spec <-
+   boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(),
+     loss_reduction = tune(), sample_size = tune()) %>%
+   set_mode("classification") %>%
+   set_engine("xgboost")
+#
+xgboost0_workflow <-
+   workflow() %>%
+   add_recipe(xgboost0_recipe) %>%
+   add_model(xgboost0_spec)
+#
+set.seed(1234)
+ xgb_res <-
+   tune_grid(xgboost0_workflow,
+             resamples = folds,
+             grid = 25,
+             control = ctrl_grid)
+#
+end_time = Sys.time()
+end_time-start_time
+
+
+saveRDS(xgb_res,"xgb_res.rds") # so you don't have to run the model again,because it may take some time( about 21 mins)
+```
+
+Saving
+```{r 26. Saving  xgb0}
+# saveRDS(xgb_res,"xgb_res.rds")
+```
+Loading
+```{r 27. Loading xgb0}
+xgb_res = readRDS("xgb_res.rds")
+```
+
+# accuracy on xgb1
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_neural_res = select_best(xgb_res, "accuracy")
+
+final_xgb_res = finalize_workflow(
+  xgboost0_workflow,
+  best_neural_res
+)
+
+final_xgb_res
+final_xgb_res_fit = fit(final_xgb_res, train)
+final_xgb_res_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_xgb_res_fit, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_xgb_res_fit, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train1
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test1
+cat(strrep("*",25),"END",strrep("*",25))
+```
+
+# XG BOOST 2
+```{r 25. Automatic_XGBoost , eval = TRUE}
+# _________________________Begin the model Autogenerating Model____________________________________________________
+# if we knit this we need to knit this out and reload to save time.
+# remove final xg fit because it it taking up some memory 
+start_time = Sys.time() #for timing
+#
+xgboost0_recipe1 <- failure_recipe1 %>%
+ step_novel(all_nominal(), -all_outcomes()) %>%
+   step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>%
+   step_zv(all_predictors())
+
+ xgboost0_spec1 <-
+   boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(),
+     loss_reduction = tune(), sample_size = tune()) %>%
+   set_mode("classification") %>%
+   set_engine("xgboost")
+
+xgboost0_workflow1 <-
+   workflow() %>%
+   add_recipe(xgboost0_recipe1) %>%
+   add_model(xgboost0_spec1)
+#
+set.seed(1234)
+xgb_res1 <-
+   tune_grid(xgboost0_workflow1,
+             resamples = folds,
+             grid = 25,
+             control = ctrl_grid)
+
+end_time = Sys.time()
+end_time-start_time
+
+
+saveRDS(xgb_res1,"xgb_res1.rds") # so you don't have to run the model again,because it may take some time( about 21 mins)
+```
+
+Saving
+```{r 26. Saving  xgb0}
+# saveRDS(xgb_res1,"xgb_res1.rds")
+```
+Loading
+```{r 27. Loading xgb0}
+xgb_res1 = readRDS("xgb_res1.rds")
+```
+
+# accuracy on xgb 2
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_xgb_res1 = select_best(xgb_res1, "accuracy")
+
+final_xgb_res1 = finalize_workflow(
+  xgboost0_workflow,
+  best_neural_res1
+)
+
+#final_xgb_res1
+final_xgb_res_fit1 = fit(final_xgb_res1, train)
+final_xgb_res_fit1 %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_xgb_res_fit1, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_xgb_res_fit1, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train1
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test1
+cat(strrep("*",25),"END",strrep("*",25))
+```
+
+
+#XG BOOST TUNED 1
+```{r 29. XGBT , eval = TRUE}
+start_time = Sys.time() #for timing
+# # 
+tgrid = expand.grid(
+    trees = 100, #50, 100, and 150 in default 
+    min_n = 1, #fixed at 1 as default 
+    tree_depth = c(1,2,3,4), #1, 2, and 3 in default 
+    learn_rate = c(0.01, 0.1, 0.2, 0.3, 0.4), #0.3 and 0.4 in default 
+    loss_reduction = 0, #fixed at 0 in default 
+    sample_size = c(0.5, 0.8, 1)) #0.5, 0.75, and 1 in default, 
+# # 
+xgboost_recipe <- failure_recipe # %>% 
+ #   recipe(formula = failure ~ ., data = train) %>% 
+#    step_novel(all_nominal(), -all_outcomes()) %>% 
+#    step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+#    step_zv(all_predictors()) 
+# # 
+xgboost_spec <- 
+    boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
+      loss_reduction = tune(), sample_size = tune()) %>% 
+    set_mode("classification") %>% 
+    set_engine("xgboost") 
+# # 
+xgboost_workflow <- 
+    workflow() %>% 
+    add_recipe(xgboost_recipe) %>% 
+    add_model(xgboost_spec) 
+# # 
+set.seed(1234)
+xgbt_res <-
+    tune_grid(xgboost_workflow, 
+              resamples = folds, 
+              grid = tgrid,
+              control = ctrl_grid)
+# # 
+end_time = Sys.time()
+end_time-start_time
+# 
+# # Saving  # comment out once ran
+saveRDS(xgbt_res,"xgbt_res.rds")  # about 3.82 mins
+```
+Saving
+```{r 30. Saving  xgb}
+# saveRDS(xgbt_res,"xgbt_res.rds")
+```
+Loading
+```{r 31. Loading xgb}
+xgbt_res = readRDS("xgbt_res.rds")
+```
+
+# accuracy on xgbt 1  
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_xgbt_res = select_best(xgbt_res, "accuracy")
+
+final_xgbt_res = finalize_workflow(
+  xgboost_workflow,
+  best_xgbt_res
+)
+
+#final_xgbt_res
+final_xgbt_res_fit = fit(final_xgbt_res, train)
+final_xgbt_res_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_xgbt_res_fit, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_xgbt_res_fit, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train1
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test1
+cat(strrep("*",25),"END",strrep("*",25))
+```
+
+# XGBOOST TUNED 2
+```{r 29. XGBT , eval = TRUE}
+ start_time = Sys.time() #for timing
+# # 
+ tgrid = expand.grid(
+    trees = 100, #50, 100, and 150 in default 
+    min_n = 1, #fixed at 1 as default 
+    tree_depth = c(1,2,3,4), #1, 2, and 3 in default 
+    learn_rate = c(0.01, 0.1, 0.2, 0.3, 0.4), #0.3 and 0.4 in default 
+    loss_reduction = 0, #fixed at 0 in default 
+    sample_size = c(0.5, 0.8, 1)) #0.5, 0.75, and 1 in default, 
+# # 
+  xgboost_recipe1 <- failure_recipe1 %>% 
+   #recipe(formula = failure ~ ., data = train) %>% 
+#    step_novel(all_nominal(), -all_outcomes()) %>% 
+#    step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+    step_zv(all_predictors()) 
+# # 
+ xgboost_spec1 <- 
+    boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
+      loss_reduction = tune(), sample_size = tune()) %>% 
+    set_mode("classification") %>% 
+    set_engine("xgboost") 
+# # 
+ xgboost_workflow1 <- 
+    workflow() %>% 
+    add_recipe(xgboost_recipe1) %>% 
+    add_model(xgboost_spec1) 
+# # 
+ set.seed(1234)
+ xgbt_res1 <-
+    tune_grid(xgboost_workflow, 
+              resamples = folds, 
+              grid = tgrid,
+              control = ctrl_grid)
+# # 
+ end_time = Sys.time()
+ end_time-start_time
+# 
+ # Saving  # comment out once ran
+ saveRDS(xgbt_res1,"xgbt_res1.rds")  # about 3.82 mins
+```
+Saving
+```{r 30. Saving  xgb}
+# saveRDS(xgbt_res,"xgbt_res.rds")
+```
+Loading
+```{r 31. Loading xgb}
+xgbt_res1 = readRDS("xgbt_res1.rds")
+```
+
+```{r 32. visual for xgb}
+#xg_mod = extract_fit_parsnip(xgbt_res)
+#vip(xgbt_mod$fit)  # variable importance measure
+```
+
+# accuracy on xgbt 2  
+```{r confusion matrix and accuracy, include=TRUE}
+set.seed(123)  # this ensures we all get the same random forest
+best_xgbt_res1 = select_best(xgbt_res1, "accuracy")
+
+final_xgbt_res1 = finalize_workflow(
+  xgboost_workflow,
+  best_xgbt_res1
+)
+
+#final_xgbt_res
+final_xgbt_res_fit1 = fit(final_xgbt_res1, train)
+final_xgbt_res_fit1 %>% pull_workflow_fit() %>% vip(geom = "point")
+trainpredrf = predict(final_xgbt_res_fit1, train)
+auto_train1 =confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+t0 = data.matrix(auto_train1)
+auto_train_accuracy = (t0[1,1]+t0[2,2])/nrow(train)   # t0[row,col)]
+auto_train_sensitivity = (t0[2,2]/(t0[2,2]+t0[1,2]))
+testpredrf = predict(final_xgbt_res_fit1, test)
+head(testpredrf)
+auto_test1 = confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+t00 = data.matrix(auto_test1)
+auto_test_accuracy = (t00[1,1]+t00[2,2])/nrow(test)
+auto_test_sensitivity = (t00[2,2]/(t00[2,2]+t00[1,2]))
+cat(strrep("*",15),"Train & Test: Accuracy & Sensitivity",strrep("*",15),'\n\n')
+cat("Train accuracy:   ", round(auto_train_accuracy,digits=4),
+    "\nTrain sensitivity:", round(auto_train_sensitivity,digits=4),
+    #'\n\n',strrep("*",15),"Test parameters",strrep("*",15),
+     "\n\nTest  accuracy:   ", round(auto_test_accuracy,digits=4),
+    "\nTest sensitivity:", round(auto_test_sensitivity,digits=4),"\n\n")
+cat(strrep("*",15),"Train parameters",strrep("*",15),'\n')
+auto_train1
+cat(strrep("*",15),"Test parameters",strrep("*",15),'\n')
+auto_test1
+cat(strrep("*",25),"END",strrep("*",25))
+```
