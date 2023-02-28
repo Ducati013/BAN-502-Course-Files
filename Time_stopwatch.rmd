@@ -1,0 +1,12 @@
+# stopwatch for whatever
+
+```{r stopwatch}
+start_time <- Sys.time()
+Sys.sleep(1.00)
+
+end_time <- Sys.time()
+end_time - start_time # comment out if you want to print and not see the time difference of
+#*run_time: `r round(endTime-startTime,digits =2)` seconds.*
+```
+
+run_time: r round(endTime-startTime,digits =2) seconds.

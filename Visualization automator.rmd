@@ -1,0 +1,21 @@
+```{r Visualization automation to evaluate predictor variables, include=TRUE}
+plots <- list()  # make a list to store plots into
+# Trying to automate the ggplots, and everything seems to be working properly, but the x input is not showing up properly.
+#The names(train[column number]) shows the correct info in the title for the plots. 
+for(i in 6:ncol(train)) {
+   plots[[i]] = (ggplot(train,# Dataframe name
+                        aes(train[,i], # DataframeName[,columnIndexNumber]
+                                   fill = failure)) + 
+              geom_bar(position = "fill")+
+                labs(title= names(train[i])# names(DataFrameName[indexNumber]) = 
+                     # provides title for graph via names function referenced by index numbers
+                     ))
+}
+
+for(i in 6:ncol(train)) {
+print(plots[[i]]) # this enables the retrieval of the plot from the list of plots by index number
+}
+print('plotting complete')
+```
+
+

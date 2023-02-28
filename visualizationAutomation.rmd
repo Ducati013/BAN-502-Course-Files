@@ -1,0 +1,107 @@
+# Automate visuals for data frames 
+# focus on factors and numerics
+```{r, include = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(mice) #package for imputation
+library(VIM) #visualizing missingness
+library(ranger) #for random forests
+library(randomForest) #also for random forests
+library(caret)
+library(skimr)
+library(GGally)
+library(gridExtra)
+library(vip) #variable importance
+library(ggplot2)
+
+test = read.csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Final Project/test.csv")
+train = read.csv("C:/Users/ducat/Documents/UNCW_Grad_school/MIS 502 Predictive Analytics/Final Project/train.csv")
+
+# Convert the char to factors
+train = train %>% mutate_if(is.character,as_factor) %>% 
+                  mutate_if(is.integer,as_factor) %>% 
+                  mutate(failure = fct_recode(failure, "No" = "0", "Yes" = "1" )) 
+                  
+train$id = as.integer(train$id)  #convert is col back to int
+
+#Clean the Data for missingness
+for(i in 2:25) {                                   # Replace NA in all columns with the mean from said col
+  train[ , i][is.na(train[ , i])] <- mean(train[ , i], na.rm = TRUE)
+  }
+train <- train %>%
+  mutate (loading = replace(loading, is.na(loading),
+                   mean(loading, na.rm=TRUE)))
+
+# train = train %>% 
+#   group_by(product_code)
+```
+
+```{r testing visuals}
+
+
+
+# i=26
+# train[i]
+# class(train[,i])  #numeric
+# class(train[i])   # data.frame
+# class(train[[i]]) # numeric
+# names(train[[i]]) # null
+# names(train[i])   # column name
+
+
+stat_count()
+p1 = ggplot(train)+  geom_bar(aes(product_code,fill= failure), position="dodge")#+
+p1  
+#geom_text(aes(label = ..count..), stat = "count", position = "fill")
+```
+
+```{r  automated visualizations_test patch, message=FALSE,echo=FALSE, include=FALSE}
+plots <- list()  # make a list to store plots into
+histogram_plots <- list()
+# ***********************Begin Loop********************************************
+
+for(i in 2:ncol(train)) {
+  ggp = ggplot(train, aes(train[,i],fill=failure)) +labs(x=element_blank(), title= names(train[i]))
+  
+  if (class(train[[i]])=="factor"){
+    plots[[i]] = (ggp + geom_bar(position = "fill"))
+    
+  } 
+  else if (class(train[[i]])=="numeric") {
+    plots[[i]] =           (ggp + geom_histogram())
+    histogram_plots[[i]] = (ggp + geom_bar(position = "fill"))
+    
+  }
+}
+
+# *******************END**********************************
+# i=3
+# ggp  = ggplot(train, aes(train[,i],fill=failure)) +labs(x=element_blank(), title= names(train[i]))
+# ggp  + geom_bar(position = "fill")  # for factors
+# ggp  + geom_histogram() # not for factors
+# 
+# ggplot(train, aes(x=loading,y=failure) + geom_point())
+# 
+# 
+# names(train[i])
+
+```
+
+```{r print the visualizations}
+startTime = Sys.time()
+for(i in 2:ncol(train)) 
+{
+  if (class(train[[i]])=="factor"){
+    print(plots[[i]])
+  }else if (class(train[[i]])=="numeric") 
+  {
+    print(plots[[i]])
+    print(histogram_plots[[i]])
+  }
+}
+
+
+endTime = Sys.time()
+duration = endTime-startTime
+cat('plotting completed in :',round(duration,2),'seconds')
+```
